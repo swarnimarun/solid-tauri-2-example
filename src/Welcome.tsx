@@ -1,4 +1,5 @@
 import { For, createEffect, createSignal } from "solid-js";
+import { A } from "@solidjs/router";
 import { FileInfo, commands } from "./bindings";
 
 function Welcome() {
@@ -16,9 +17,7 @@ function Welcome() {
             <For each={recentlyUsedList()} fallback={<div></div>}>
                 {(z) => <>{z.path}</>}
             </For>
-            <button onClick={() => { location.href = "/upload" }}>
-                upload
-            </button>
+            <A href="/upload">Upload Page</A>
         </div>
     );
 }
