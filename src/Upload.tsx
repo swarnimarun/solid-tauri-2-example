@@ -2,6 +2,7 @@ import { For, createSignal } from "solid-js";
 import { FileInfo, commands } from "./bindings";
 
 import { open } from '@tauri-apps/plugin-dialog';
+import { Button } from "./components/ui/button";
 
 
 function App() {
@@ -28,11 +29,7 @@ function App() {
           getZip();
         }}
       >
-        <button
-          type="submit"
-        >
-          open
-        </button>
+        <Button type="submit"> open. </Button>
       </form>
     </div>
   );
