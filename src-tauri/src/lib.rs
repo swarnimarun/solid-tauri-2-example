@@ -1,26 +1,79 @@
-use std::{collections::VecDeque, env, path::PathBuf};
+mod config;
+mod error;
 
-use keyed_priority_queue::{Entry, KeyedPriorityQueue};
+use crate::config::AppConfig;
+use crate::error::AppError;
+
+use std::{collections::HashMap, sync::Arc};
+
+use keyed_priority_queue::Entry;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{async_runtime::RwLock, State};
-use thiserror::Error;
+use tauri::{
+    async_runtime::{channel, Mutex, Receiver, RwLock, Sender},
+    Manager, State, Window,
+};
+use zip::{read::ZipFile, result::ZipError};
 
-#[derive(Error, Debug, Serialize, Deserialize, Type)]
-enum AppError {
-    #[error("failed to load config: {0}")]
-    ConfigFailure(String),
-    #[error("failed to unzip file: {0}")]
-    FailedUnzip(String),
-    #[error("invalid file path: {0}")]
-    InvalidPath(String),
-    #[error("io failure: {0}")]
-    IoError(String),
+#[derive(Serialize, Deserialize, Type)]
+struct FileInfoInTree {
+    depth: usize,
+    parent: Option<String>,
+    name: String,
 }
 
 #[derive(Serialize, Deserialize, Type)]
 struct FileInfo {
     path: String,
+}
+
+fn file_to_event(
+    file: &ZipFile,
+    tree: &mut fs_tree::FsTree,
+    window: &Window,
+) -> Result<(), AppError> {
+    let size = file.size();
+    let path = file.enclosed_name().unwrap();
+    let depth = path.ancestors().count();
+    // if zero depth then it's the root directory
+    if depth == 0 {
+        return Ok(());
+    }
+    let name = path
+        .file_name()
+        .expect("in zip paths that end in .. shouldn't be possible")
+        .to_string_lossy()
+        .to_string();
+    let p = format!("/{}", path.display());
+    let t = if file.is_file() {
+        fs_tree::FsTree::Regular
+    } else {
+        fs_tree::FsTree::new_dir()
+    };
+    tree.insert(p, t);
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    struct Payload {
+        depth: usize,
+        name: String,
+        size: u64,
+    }
+    window
+        .emit("unzip_file", Payload { depth, name, size })
+        .map_err(|e| AppError::EventError(e.to_string()))
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+async fn file_password_submit(
+    password: String,
+    sender: State<'_, Arc<Mutex<Sender<Vec<u8>>>>>,
+) -> Result<(), AppError> {
+    Ok(sender
+        .lock()
+        .await
+        .send(password.into_bytes())
+        .await
+        .map_err(|e| AppError::IoError(e.to_string()))?)
 }
 
 #[tauri::command(async)]
@@ -29,11 +82,13 @@ struct FileInfo {
 // from JS without blocking the main thread as it
 // can be slow
 async fn try_unzip(
+    window: Window,
     file: FileInfo,
     config: State<'_, RwLock<AppConfig>>,
-) -> Result<Vec<FileInfo>, AppError> {
+    receiver: State<'_, Arc<Mutex<Receiver<Vec<u8>>>>>,
+) -> Result<(), AppError> {
     // decompress the file and return the file contents list
-    let archive = zip::ZipArchive::new(
+    let mut archive = zip::ZipArchive::new(
         std::fs::File::open(&file.path).map_err(|e| AppError::IoError(e.to_string()))?,
     )
     .map_err(|e| AppError::FailedUnzip(e.to_string()))?;
@@ -41,15 +96,76 @@ async fn try_unzip(
     // create tree, add root
     let mut tree = fs_tree::FsTree::new_dir();
     tree.insert("/", fs_tree::FsTree::new_dir());
-    for i in archive.file_names() {
-        let p = format!("/{i}");
-        tree.insert(p, fs_tree::FsTree::new_dir());
-    }
 
-    for (t, p) in tree.iter() {
-        let depth = p.ancestors().count();
-        if depth != 0 {
-            tracing::info!("tree({}): {:?}", depth, t);
+    let mut s: HashMap<[u8; 2], Vec<u8>> = HashMap::new();
+
+    for i in 0..archive.len() {
+        let err = match archive.by_index(i) {
+            Ok(file) if file.enclosed_name().is_some() => {
+                file_to_event(&file, &mut tree, &window)?;
+                continue;
+            }
+            Ok(file) => {
+                tracing::error!(
+                    "`SECURITY ISSUE` bad file path(breaks out of root directory): {}",
+                    file.name()
+                );
+                continue;
+            }
+            // don't continue if error
+            Err(err) => err,
+        };
+
+        // if false we know it requires a PASSWORD
+        if !matches!(
+            err,
+            ZipError::UnsupportedArchive(ZipError::PASSWORD_REQUIRED)
+        ) {
+            tracing::info!("successfully unzipped");
+            return Err(AppError::FailedUnzip(err.to_string()));
+        }
+        // manage caching of passwords for files
+        let password = if let Some(vv) = archive
+            .get_aes_verification_key_and_salt(i)
+            .ok()
+            .flatten()
+            .map(|e| e.verification_value)
+        {
+            if let Some(password) = s.get(&vv) {
+                // if the key is available
+                password.clone()
+            } else {
+                // create alert for password for each file (for now!)
+                let _ = window
+                    .emit("file-password-request", ())
+                    .map_err(|e| AppError::EventError(e.to_string()));
+                // assume receiver is supposed to be fullfilled by JS invoke called on event push
+                // TODO: add better timeout
+                let mut r = receiver.lock().await;
+                let password = r.recv().await.ok_or(AppError::PasswordFail)?;
+                s.insert(vv, password.clone());
+                password
+            }
+        } else {
+            return Err(AppError::FailedUnzip(
+                "unable to get password, should be unreachable".to_string(),
+            ));
+        };
+
+        match archive.by_index_decrypt(i, &password) {
+            Ok(file) if file.enclosed_name().is_some() => {
+                file_to_event(&file, &mut tree, &window)?;
+                continue;
+            }
+            Ok(file) => {
+                tracing::error!(
+                    "`SECURITY ISSUE` bad file path(breaks out of root directory): {}",
+                    file.name()
+                );
+                continue;
+            }
+            // TODO: handle the error here properly
+            Err(_) => panic!("failed to decrypt/unzip file"),
         }
     }
 
@@ -78,8 +194,7 @@ async fn try_unzip(
         write.recently_viewed_set.remove(&path);
     }
 
-    Ok(vec![])
-    // TODO: move to using streams instead of blocking command
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -94,89 +209,6 @@ async fn recently_used(config: State<'_, RwLock<AppConfig>>) -> Result<Vec<FileI
         .cloned()
         .map(|path| FileInfo { path })
         .collect())
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct AppConfig {
-    multi_threaded_decompression: bool,
-    recently_viewed: VecDeque<String>,
-
-    // used for performance and maintaining ordering
-    #[serde(skip_serializing, skip_deserializing)]
-    recently_viewed_set: KeyedPriorityQueue<String, usize>,
-    // TODO: add more config options
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        tracing::info!("using default config");
-        Self {
-            multi_threaded_decompression: false,
-            recently_viewed: VecDeque::with_capacity(5),
-            recently_viewed_set: KeyedPriorityQueue::with_capacity(5),
-        }
-    }
-}
-
-impl AppConfig {
-    #[tracing::instrument]
-    fn load() -> Result<Self, AppError> {
-        tracing::info!("loading config");
-
-        let config_dir = std::env::var("ZIPTAURI_CONFIG_DIR")
-            .ok()
-            .or_else(|| {
-                directories::ProjectDirs::from("", "hoppscotch", "ziptauri")
-                    .map(|p| p.config_dir().to_string_lossy().to_string())
-            })
-            .ok_or_else(|| {
-                AppError::ConfigFailure("no valid home directory found for the system".to_string())
-            })?;
-
-        let mut c: AppConfig = serde_json::from_slice(
-            &std::fs::read(PathBuf::from(config_dir).join("config.json"))
-                .map_err(|e| AppError::IoError(e.to_string()))?,
-        )
-        .map_err(|e| AppError::IoError(e.to_string()))?;
-
-        c.recently_viewed_set = c
-            .recently_viewed
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.clone(), i))
-            .collect();
-
-        Ok(c)
-    }
-
-    #[tracing::instrument]
-    fn save(&self) -> Result<(), AppError> {
-        tracing::info!("saving config");
-
-        let config_dir = std::env::var("ZIPTAURI_CONFIG_DIR")
-            .ok()
-            .or_else(|| {
-                directories::ProjectDirs::from("", "hoppscotch", "ziptauri")
-                    .map(|p| p.config_dir().to_string_lossy().to_string())
-            })
-            .ok_or_else(|| {
-                AppError::ConfigFailure("no valid home directory found for the system".to_string())
-            })?;
-
-        let config_json =
-            serde_json::to_string_pretty(self).map_err(|e| AppError::IoError(e.to_string()))?;
-
-        // ensure the path is created before writing
-        std::fs::create_dir_all(&config_dir).map_err(|e| AppError::IoError(e.to_string()))?;
-
-        std::fs::write(PathBuf::from(config_dir).join("config.json"), config_json)
-            .map_err(|e| AppError::IoError(e.to_string()))
-    }
-
-    #[tracing::instrument]
-    fn load_or_default() -> Self {
-        Self::load().unwrap_or_default()
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -203,9 +235,14 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
+    let (s, r) = channel::<Vec<u8>>(2);
+
     let invoke_handler = {
-        let builder = tauri_specta::ts::builder()
-            .commands(tauri_specta::collect_commands![try_unzip, recently_used]);
+        let builder = tauri_specta::ts::builder().commands(tauri_specta::collect_commands![
+            try_unzip,
+            recently_used,
+            file_password_submit
+        ]);
 
         #[cfg(all(debug_assertions, not(mobile)))]
         let builder = builder.path("../src/bindings.ts");
@@ -218,7 +255,12 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // app config
         .manage(RwLock::new(config))
+        // sender
+        .manage(Arc::new(Mutex::new(s)))
+        // receiver
+        .manage(Arc::new(Mutex::new(r)))
         .invoke_handler(invoke_handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
