@@ -32,7 +32,7 @@ try {
 
 /** user-defined types **/
 
-export type AppError = { FailedUnzip: string } | { InvalidPath: string }
+export type AppError = { ConfigFailure: string } | { FailedUnzip: string } | { InvalidPath: string } | { IoError: string }
 export type FileInfo = { path: string }
 
 /** tauri-specta globals **/

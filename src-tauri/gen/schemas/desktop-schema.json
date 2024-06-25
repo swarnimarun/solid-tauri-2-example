@@ -363,12 +363,6 @@
         {
           "type": "string",
           "enum": [
-            "devtools:default"
-          ]
-        },
-        {
-          "type": "string",
-          "enum": [
             "dialog:default"
           ]
         },
