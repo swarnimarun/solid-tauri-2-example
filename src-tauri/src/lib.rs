@@ -6,6 +6,7 @@ use crate::error::AppError;
 
 use std::{collections::HashMap, sync::Arc};
 
+use futures::{pin_mut, FutureExt};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{
@@ -57,11 +58,26 @@ async fn file_password_submit(
 // NOTE: this command is async so that it can be called
 // from JS without blocking the main thread as it
 // can be slow
+async fn cancel_unzip(cancel: State<'_, Arc<Mutex<Sender<()>>>>) -> Result<(), AppError> {
+    Ok(cancel
+        .lock()
+        .await
+        .send(())
+        .await
+        .map_err(|e| AppError::IoError(e.to_string()))?)
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+// NOTE: this command is async so that it can be called
+// from JS without blocking the main thread as it
+// can be slow
 async fn try_unzip(
     window: Window,
     file: FileInfo,
     config: State<'_, RwLock<AppConfig>>,
     receiver: State<'_, Arc<Mutex<Receiver<Vec<u8>>>>>,
+    cancel: State<'_, Arc<Mutex<Receiver<()>>>>,
 ) -> Result<(), AppError> {
     // decompress the file and return the file contents list
     let mut archive = zip::ZipArchive::new(
@@ -114,9 +130,21 @@ async fn try_unzip(
                 // assume receiver is supposed to be fullfilled by JS invoke called on event push
                 // TODO: add better timeout
                 let mut r = receiver.lock().await;
-                let password = r.recv().await.ok_or(AppError::PasswordFail)?;
-                s.insert(vv, password.clone());
-                password
+                let mut rc = cancel.lock().await;
+                // cancel, if rc is received
+                let password_fut = r.recv().fuse();
+                let cancel_fut = rc.recv().fuse();
+                pin_mut!(password_fut, cancel_fut);
+                futures::select! {
+                    password = password_fut => {
+                        let password = password.ok_or(AppError::PasswordFail)?;
+                        s.insert(vv, password.clone());
+                        password
+                    },
+                    _ = cancel_fut => {
+                        return Err(AppError::PasswordFail)
+                    },
+                }
             }
         } else {
             return Err(AppError::FailedUnzip(
@@ -201,10 +229,12 @@ pub fn run() {
     // TODO: consider making this configurable?
     // Maybe we should also consider the payload configuration
     let (s, r) = channel::<Vec<u8>>(2);
+    let (sc, rc) = channel::<()>(2);
 
     let invoke_handler = {
         let builder = tauri_specta::ts::builder().commands(tauri_specta::collect_commands![
             try_unzip,
+            cancel_unzip,
             recently_used,
             file_password_submit
         ]);
@@ -224,8 +254,10 @@ pub fn run() {
         .manage(RwLock::new(config))
         // sender
         .manage(Arc::new(Mutex::new(s)))
+        .manage(Arc::new(Mutex::new(sc)))
         // receiver
         .manage(Arc::new(Mutex::new(r)))
+        .manage(Arc::new(Mutex::new(rc)))
         .invoke_handler(invoke_handler)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
