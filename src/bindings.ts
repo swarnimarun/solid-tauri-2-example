@@ -24,17 +24,17 @@ try {
     else return { status: "error", error: e  as any };
 }
 },
-async recentlyUsed() : Promise<Result<FileInfo[], AppError>> {
+async filePasswordSubmit(password: string) : Promise<Result<null, AppError>> {
 try {
-    return { status: "ok", data: await TAURI_INVOKE("recently_used") };
+    return { status: "ok", data: await TAURI_INVOKE("file_password_submit", { password }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async filePasswordSubmit(password: string) : Promise<Result<null, AppError>> {
+async recentlyUsed() : Promise<Result<FileInfo[], AppError>> {
 try {
-    return { status: "ok", data: await TAURI_INVOKE("file_password_submit", { password }) };
+    return { status: "ok", data: await TAURI_INVOKE("recently_used") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -25,7 +25,7 @@ function Welcome() {
                         <For each={recentlyUsedList()} fallback={<Button variant="secondary">No files opened yet!</Button>}>
                             {
                                 (z) => <li>
-                                    <A href={`/upload?path=${z.path}`}>
+                                    <A href="/upload" onClick={() => localStorage.setItem("unzip-path", z.path)}>
                                         <Button variant="outline">{z.path}</Button>
                                     </A>
                                 </li>

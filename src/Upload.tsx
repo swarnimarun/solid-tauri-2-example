@@ -48,6 +48,16 @@ function App() {
         return e;
       });
     });
+
+    // note: ensure all the listeners have been registered first.
+    let path = localStorage.getItem("unzip-path");
+    // clear local storage so that we don't get stuck
+    localStorage.removeItem("unzip-path");
+    if (path) {
+      // clear up path map
+      setPathMap([]);
+      commands.tryUnzip({ path });
+    }
   });
 
   async function filePasswordSubmit(password: string) {
