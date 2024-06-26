@@ -67,7 +67,6 @@ pub fn run() {
     let invoke_handler = {
         let builder = tauri_specta::ts::builder().commands(tauri_specta::collect_commands![
             crate::unzip::try_unzip,
-            crate::unzip::try_unzip_prefixtree,
             crate::unzip::cancel_unzip,
             crate::unzip::file_password_submit,
             recently_used

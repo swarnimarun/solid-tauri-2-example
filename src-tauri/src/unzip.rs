@@ -66,7 +66,6 @@ pub async fn cancel_unzip(cancel: State<'_, Arc<Mutex<Sender<()>>>>) -> Result<(
 }
 
 #[tauri::command(async)]
-#[specta::specta]
 pub async fn try_unzip_prefixtree<'a>(
     window: Window,
     file: FileInfo,

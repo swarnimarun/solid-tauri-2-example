@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 /// This is quite a bit slower than what it can be, but it makes writing the api for it much easier
 /// and I couldn't find a library that does it, really wasted too much time on this.
 pub struct PrefixTree {
