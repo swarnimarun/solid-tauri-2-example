@@ -12,6 +12,18 @@ try {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * cancellation only works if the channel buffer has enough space, for an immediate cancellation
+ * this ensures we can't cancel twice
+ */
+async cancelUnzip() : Promise<Result<null, AppError>> {
+try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_unzip") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async recentlyUsed() : Promise<Result<FileInfo[], AppError>> {
 try {
     return { status: "ok", data: await TAURI_INVOKE("recently_used") };

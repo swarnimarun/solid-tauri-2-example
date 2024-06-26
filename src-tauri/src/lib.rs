@@ -24,18 +24,22 @@ fn file_to_event(file: &ZipFile, window: &Window) -> Result<(), AppError> {
     let size = file.size();
     let path = file.enclosed_name().unwrap();
     let depth = path.ancestors().count();
-    let path = path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .collect();
+    let path = path.to_string_lossy().to_string();
     #[derive(Debug, Serialize, Deserialize, Clone)]
     struct Payload {
-        depth: usize,
-        path: Vec<String>,
-        size: u64,
+        path: String,
+        depth: u32,
+        size: u32,
     }
     window
-        .emit("unzip-file", Payload { depth, path, size })
+        .emit(
+            "unzip-file",
+            Payload {
+                depth: depth as u32,
+                path,
+                size: size as u32,
+            },
+        )
         .map_err(|e| AppError::EventError(e.to_string()))
 }
 
@@ -55,13 +59,12 @@ async fn file_password_submit(
 
 #[tauri::command(async)]
 #[specta::specta]
-// NOTE: this command is async so that it can be called
-// from JS without blocking the main thread as it
-// can be slow
+/// cancellation only works if the channel buffer has enough space, for an immediate cancellation
+/// this ensures we can't cancel twice
 async fn cancel_unzip(cancel: State<'_, Arc<Mutex<Sender<()>>>>) -> Result<(), AppError> {
     Ok(cancel
-        .lock()
-        .await
+        .try_lock()
+        .map_err(|e| AppError::IoError(e.to_string()))?
         .send(())
         .await
         .map_err(|e| AppError::IoError(e.to_string()))?)
@@ -79,6 +82,10 @@ async fn try_unzip(
     receiver: State<'_, Arc<Mutex<Receiver<Vec<u8>>>>>,
     cancel: State<'_, Arc<Mutex<Receiver<()>>>>,
 ) -> Result<(), AppError> {
+    {
+        // drain cancellation
+        _ = cancel.try_lock();
+    }
     // decompress the file and return the file contents list
     let mut archive = zip::ZipArchive::new(
         std::fs::File::open(&file.path).map_err(|e| AppError::IoError(e.to_string()))?,
@@ -152,6 +159,7 @@ async fn try_unzip(
             ));
         };
 
+        // access file with password
         match archive.by_index_decrypt(i, &password) {
             Ok(file) if file.enclosed_name().is_some() => {
                 file_to_event(&file, &window)?;
@@ -229,7 +237,7 @@ pub fn run() {
     // TODO: consider making this configurable?
     // Maybe we should also consider the payload configuration
     let (s, r) = channel::<Vec<u8>>(2);
-    let (sc, rc) = channel::<()>(2);
+    let (sc, rc) = channel::<()>(1);
 
     let invoke_handler = {
         let builder = tauri_specta::ts::builder().commands(tauri_specta::collect_commands![

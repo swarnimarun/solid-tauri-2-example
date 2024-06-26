@@ -1,74 +1,38 @@
 import { For, createEffect, createSignal } from "solid-js";
-import { FileInfo, commands } from "./bindings";
+import { commands } from "./bindings";
 
 import { listen, Event as TauriEvent } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
-import { TextField, TextFieldLabel, TextFieldRoot } from "./components/ui/textfield";
+import { TextField, TextFieldRoot } from "./components/ui/textfield";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card";
 
-interface PathMap {
-  inner: Map<string, PathMap[]>,
-}
-
-function Keys(map: PathMap | null): string[] {
-  if (!map) return [];
-  return [...map.inner.keys()];
-}
-
-function Values(map: PathMap | null, path: string): PathMap[] | undefined {
-  if (!map) return [];
-  return map.inner.get(path);
-}
-
-function RecursiveRender(props: { map: PathMap | null }) {
-  return <div>
-    <For each={Keys(props.map)} fallback={<></>}>
-      {
-        (e) =>
-          <ul>
-            <h2>{e}</h2>
-            <br />
-            <For each={Values(props.map, e) || []}>
-              {(e) => <li><RecursiveRender map={e} /></li>}
-            </For>
-          </ul>
-      }
+function RecursiveRender(props: { paths: string[] }) {
+  return <ul class="flex-col space-y-1">
+    <For each={props.paths} fallback={<></>}>
+      {(e) => <li><Button disabled variant="secondary">{e}</Button></li>}
     </For>
-  </div>;
-}
-function appendToPathMap(v: PathMap, path: string[]): PathMap {
-  let map = v;
-  for (let i = 0; i < path.length; i++) {
-    if (!map.inner.has(path[i])) {
-      map.inner.set(path[i], []);
-    }
-    // map = map.inner.get(path[i])!;
-  }
-  return map;
-}
-function mapFromPath(path: string[]): PathMap {
-  let map = new Map<string, PathMap[]>();
-  map.set(path[0], []);
-  return {
-    inner: map
-  };
+  </ul>
 }
 
+// handle graphs
 interface TauriPayload {
-  path: string[],
+  path: string,
 }
 
 function App() {
-  const [pathMap, setPathMap] = createSignal<PathMap | null>(null);
+  const [pathMap, setPathMap] = createSignal<string[]>([], { equals: false });
   const [alert, showAlert] = createSignal(false);
   const [password, setPassword] = createSignal("");
 
   async function getZip() {
     let file = await open({ title: "Open zip", directory: false, filters: [{ name: "Zip", extensions: ["zip"] }] });
-    if (file)
-      commands.tryUnzip(file);
+    if (file) {
+      // clear up path map
+      setPathMap([]);
+      await commands.tryUnzip(file);
+    }
   }
 
   createEffect(() => {
@@ -78,13 +42,10 @@ function App() {
     });
 
     listen("unzip-file", async (event: TauriEvent<TauriPayload>) => {
-      let payload: TauriPayload = event.payload;
       // add file to pathMap
-      setPathMap((v) => {
-        if (!v)
-          return mapFromPath(payload.path);
-        appendToPathMap(v, payload.path);
-        return v;
+      setPathMap((e) => {
+        e.push(event.payload.path);
+        return e;
       });
     });
   });
@@ -96,6 +57,7 @@ function App() {
   async function passwordDialogHandle(b: boolean) {
     if (!b) {
       // raise an error and cancel unzip request
+      await commands.cancelUnzip();
     }
     // close alert
     showAlert(b);
@@ -111,8 +73,9 @@ function App() {
           </DialogHeader>
           <form onSubmit={async (e) => {
             e.preventDefault();
-            console.log("password: ", password());
-            // filePasswordSubmit(password())
+            // don't log password
+            // console.log("password: ", password());
+            await filePasswordSubmit(password());
             // close alert
             showAlert(false);
             // reset password
@@ -135,7 +98,7 @@ function App() {
           <CardDescription>zipped file explorer.</CardDescription>
         </CardHeader>
         <CardContent class="overflow-y-scroll max-h-96 min-h-48">
-          {<RecursiveRender map={pathMap()} />}
+          {<RecursiveRender paths={pathMap()} />}
         </CardContent>
         <CardFooter class="flex justify-center">
           <Button onClick={() => getZip()}> . open file . </Button>
