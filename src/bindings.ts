@@ -4,7 +4,7 @@
          /** user-defined commands **/
 
          export const commands = {
-async tryUnzip(file: FileInfo) : Promise<Result<FileInfo[], AppError>> {
+async tryUnzip(file: FileInfo) : Promise<Result<null, AppError>> {
 try {
     return { status: "ok", data: await TAURI_INVOKE("try_unzip", { file }) };
 } catch (e) {
@@ -15,6 +15,14 @@ try {
 async recentlyUsed() : Promise<Result<FileInfo[], AppError>> {
 try {
     return { status: "ok", data: await TAURI_INVOKE("recently_used") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async filePasswordSubmit(password: string) : Promise<Result<null, AppError>> {
+try {
+    return { status: "ok", data: await TAURI_INVOKE("file_password_submit", { password }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -32,7 +40,7 @@ try {
 
 /** user-defined types **/
 
-export type AppError = { ConfigFailure: string } | { FailedUnzip: string } | { InvalidPath: string } | { IoError: string }
+export type AppError = { ConfigFailure: string } | { FailedUnzip: string } | { InvalidPath: string } | { IoError: string } | "PasswordFail" | { EventError: string }
 export type FileInfo = { path: string }
 
 /** tauri-specta globals **/

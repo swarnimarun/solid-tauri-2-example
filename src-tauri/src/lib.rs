@@ -6,7 +6,6 @@ use crate::error::AppError;
 
 use std::{collections::HashMap, sync::Arc};
 
-use keyed_priority_queue::Entry;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{
@@ -16,49 +15,26 @@ use tauri::{
 use zip::{read::ZipFile, result::ZipError};
 
 #[derive(Serialize, Deserialize, Type)]
-struct FileInfoInTree {
-    depth: usize,
-    parent: Option<String>,
-    name: String,
-}
-
-#[derive(Serialize, Deserialize, Type)]
 struct FileInfo {
     path: String,
 }
 
-fn file_to_event(
-    file: &ZipFile,
-    tree: &mut fs_tree::FsTree,
-    window: &Window,
-) -> Result<(), AppError> {
+fn file_to_event(file: &ZipFile, window: &Window) -> Result<(), AppError> {
     let size = file.size();
     let path = file.enclosed_name().unwrap();
     let depth = path.ancestors().count();
-    // if zero depth then it's the root directory
-    if depth == 0 {
-        return Ok(());
-    }
-    let name = path
-        .file_name()
-        .expect("in zip paths that end in .. shouldn't be possible")
-        .to_string_lossy()
-        .to_string();
-    let p = format!("/{}", path.display());
-    let t = if file.is_file() {
-        fs_tree::FsTree::Regular
-    } else {
-        fs_tree::FsTree::new_dir()
-    };
-    tree.insert(p, t);
+    let path = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
     #[derive(Debug, Serialize, Deserialize, Clone)]
     struct Payload {
         depth: usize,
-        name: String,
+        path: Vec<String>,
         size: u64,
     }
     window
-        .emit("unzip_file", Payload { depth, name, size })
+        .emit("unzip-file", Payload { depth, path, size })
         .map_err(|e| AppError::EventError(e.to_string()))
 }
 
@@ -93,16 +69,12 @@ async fn try_unzip(
     )
     .map_err(|e| AppError::FailedUnzip(e.to_string()))?;
 
-    // create tree, add root
-    let mut tree = fs_tree::FsTree::new_dir();
-    tree.insert("/", fs_tree::FsTree::new_dir());
-
     let mut s: HashMap<[u8; 2], Vec<u8>> = HashMap::new();
 
     for i in 0..archive.len() {
         let err = match archive.by_index(i) {
             Ok(file) if file.enclosed_name().is_some() => {
-                file_to_event(&file, &mut tree, &window)?;
+                file_to_event(&file, &window)?;
                 continue;
             }
             Ok(file) => {
@@ -154,7 +126,7 @@ async fn try_unzip(
 
         match archive.by_index_decrypt(i, &password) {
             Ok(file) if file.enclosed_name().is_some() => {
-                file_to_event(&file, &mut tree, &window)?;
+                file_to_event(&file, &window)?;
                 continue;
             }
             Ok(file) => {
@@ -171,28 +143,18 @@ async fn try_unzip(
 
     // handle insertion and removal of recently viewed
     let mut write = config.write().await;
-    let size = write.recently_viewed_set.len();
-    let mut remove_item = None;
-    match write.recently_viewed_set.entry(file.path.clone()) {
-        Entry::Occupied(entry) => {
-            let index = *entry.get_priority();
-            entry.set_priority(size);
-            write.recently_viewed.push_front(file.path);
-            // will cap at 5 max elements
-            write.recently_viewed.remove(index);
-            write.save()?;
-        }
-        Entry::Vacant(entry) => {
-            entry.set_priority(size);
-            write.recently_viewed.push_front(file.path);
-            // will cap at 5 max elements
-            remove_item = write.recently_viewed.remove(5);
-            write.save()?;
-        }
-    };
-    if let Some(path) = remove_item {
-        write.recently_viewed_set.remove(&path);
+    if let Some((index, _)) = write
+        .recently_viewed
+        .iter()
+        .enumerate()
+        .find(|f| f.1.eq(&file.path))
+    {
+        write.recently_viewed.remove(index);
     }
+    write.recently_viewed.push_front(file.path);
+    // cap at 5 elements max
+    write.recently_viewed.remove(5);
+    write.save()?;
 
     Ok(())
 }
@@ -235,6 +197,9 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
+    // we don't need more than 2 because we only have one event processor on JS side
+    // TODO: consider making this configurable?
+    // Maybe we should also consider the payload configuration
     let (s, r) = channel::<Vec<u8>>(2);
 
     let invoke_handler = {

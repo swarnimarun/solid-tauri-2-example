@@ -1,4 +1,3 @@
-use keyed_priority_queue::KeyedPriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -8,10 +7,6 @@ use crate::error::AppError;
 pub struct AppConfig {
     pub multi_threaded_decompression: bool,
     pub recently_viewed: VecDeque<String>,
-
-    // used for performance and maintaining ordering
-    #[serde(skip_serializing, skip_deserializing)]
-    pub recently_viewed_set: KeyedPriorityQueue<String, usize>,
     // TODO: add more config options
 }
 
@@ -21,7 +16,6 @@ impl Default for AppConfig {
         Self {
             multi_threaded_decompression: false,
             recently_viewed: VecDeque::with_capacity(5),
-            recently_viewed_set: KeyedPriorityQueue::with_capacity(5),
         }
     }
 }
@@ -41,20 +35,11 @@ impl AppConfig {
                 AppError::ConfigFailure("no valid home directory found for the system".to_string())
             })?;
 
-        let mut c: AppConfig = serde_json::from_slice(
+        serde_json::from_slice(
             &std::fs::read(PathBuf::from(config_dir).join("config.json"))
                 .map_err(|e| AppError::IoError(e.to_string()))?,
         )
-        .map_err(|e| AppError::IoError(e.to_string()))?;
-
-        c.recently_viewed_set = c
-            .recently_viewed
-            .iter()
-            .enumerate()
-            .map(|(i, x)| (x.clone(), i))
-            .collect();
-
-        Ok(c)
+        .map_err(|e| AppError::IoError(e.to_string()))
     }
 
     #[tracing::instrument]

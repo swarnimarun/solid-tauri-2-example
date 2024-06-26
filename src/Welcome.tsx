@@ -2,6 +2,7 @@ import { For, createEffect, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
 import { FileInfo, commands } from "./bindings";
 import { Button } from "./components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card";
 
 function Welcome() {
     const [recentlyUsedList, setRecentlyUsedList] = createSignal<FileInfo[]>([]);
@@ -13,15 +14,32 @@ function Welcome() {
     });
 
     return (
-        <div>
-            <h1>Welcome to ZipTauri!</h1>
-            <For each={recentlyUsedList()} fallback={<div></div>}>
-                {(z) => <>{z.path}</>}
-            </For>
-            <A href="/upload">
-                <Button> Goto Upload Page </Button>
-            </A>
-        </div>
+        <div class="flex h-screen dark justify-center items-center">
+            <Card>
+                <CardHeader>
+                    <CardTitle>Welcome to ZipTauri!</CardTitle>
+                    <CardDescription>Open recent files</CardDescription>
+                </CardHeader>
+                <CardContent class="flex flex-row justify-center">
+                    <ul>
+                        <For each={recentlyUsedList()} fallback={<Button variant="secondary">No files opened yet!</Button>}>
+                            {
+                                (z) => <li>
+                                    <A href={`/upload?path=${z.path}`}>
+                                        <Button variant="outline">{z.path}</Button>
+                                    </A>
+                                </li>
+                            }
+                        </For>
+                    </ul>
+                </CardContent>
+                <CardFooter class="flex justify-center">
+                    <A href="/upload">
+                        <Button>New File</Button>
+                    </A>
+                </CardFooter>
+            </Card>
+        </div >
     );
 }
 

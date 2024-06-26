@@ -1086,12 +1086,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "file_type_enum"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da3816621be5b3da37ea316a013382f0aebd6cd49fe9f3ee8cdbef35fcd7f12f"
-
-[[package]]
 name = "filetime"
 version = "0.2.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1153,25 +1147,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "fs-err"
-version = "2.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88a41f105fe1d5b6b34b2055e3dc59bb79b46b48b2040b9e6c7b4b5de097aa41"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
-name = "fs-tree"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0179a7835b223f70c4560ae1c826e7346026dbf7972bbb6e07812d0b7a9959e"
-dependencies = [
- "file_type_enum",
- "fs-err",
 ]
 
 [[package]]
@@ -1962,15 +1937,6 @@ dependencies = [
  "bitflags 2.5.0",
  "serde",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "keyed_priority_queue"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ee7893dab2e44ae5f9d0173f26ff4aa327c10b01b06a72b52dd9405b628640d"
-dependencies = [
- "indexmap 2.2.6",
 ]
 
 [[package]]
@@ -5373,8 +5339,6 @@ name = "ziptauri"
 version = "0.1.0"
 dependencies = [
  "directories",
- "fs-tree",
- "keyed_priority_queue",
  "serde",
  "serde_json",
  "specta",
