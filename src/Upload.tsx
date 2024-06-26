@@ -1,37 +1,43 @@
 import { For, createEffect, createSignal } from "solid-js";
 import { commands } from "./bindings";
 
-import { listen, Event as TauriEvent } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { TextField, TextFieldRoot } from "./components/ui/textfield";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card";
 
-function RecursiveRender(props: { paths: string[] }) {
+function RecursiveRender(props: { object: Object }) {
   return <ul class="flex-col space-y-1">
-    <For each={props.paths} fallback={<></>}>
-      {(e) => <li><Button disabled variant="secondary">{e}</Button></li>}
+    <For each={Object.keys(props.object)} fallback={<></>}>
+      {
+        (e) => <li>
+          <Button disabled variant="ghost">{e}</Button>
+          <div class="ml-8">
+            <RecursiveRender object={(props.object as { [key: string]: Object })[e]} />
+          </div>
+        </li>
+      }
     </For>
   </ul>
 }
 
-// handle graphs
-interface TauriPayload {
-  path: string,
-}
-
 function App() {
-  const [pathMap, setPathMap] = createSignal<string[]>([], { equals: false });
+  const [obj, setObj] = createSignal<Object>({}, { equals: false });
   const [alert, showAlert] = createSignal(false);
   const [password, setPassword] = createSignal("");
 
-  async function getZip() {
-    let file = await open({ title: "Open zip", directory: false, filters: [{ name: "Zip", extensions: ["zip"] }] });
+  async function getZipPrefixTree() {
+    let file = await open({ title: "Open zip", directory: false, multiple: false, filters: [{ name: "Zip", extensions: ["zip"] }] });
     if (file) {
       // clear up path map
-      setPathMap([]);
-      await commands.tryUnzip(file);
+      let result = await commands.tryUnzipPrefixTree(file);
+      if (result.status === "ok") {
+        let res: Object = result.data;
+        console.log("res: ", res);
+        setObj(res);
+      }
     }
   }
 
@@ -39,14 +45,6 @@ function App() {
     listen("file-password-request", async (_) => {
       // create a alert & prompt for password
       showAlert(true);
-    });
-
-    listen("unzip-file", async (event: TauriEvent<TauriPayload>) => {
-      // add file to pathMap
-      setPathMap((e) => {
-        e.push(event.payload.path);
-        return e;
-      });
     });
   });
 
@@ -98,10 +96,10 @@ function App() {
           <CardDescription>zipped file explorer.</CardDescription>
         </CardHeader>
         <CardContent class="overflow-y-scroll max-h-96 min-h-48">
-          {<RecursiveRender paths={pathMap()} />}
+          <RecursiveRender object={obj()} />
         </CardContent>
         <CardFooter class="flex justify-center">
-          <Button onClick={() => getZip()}> . open file . </Button>
+          <Button onClick={() => getZipPrefixTree()}> . open file . </Button>
         </CardFooter>
       </Card>
     </div>
