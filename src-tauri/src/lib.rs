@@ -64,22 +64,6 @@ pub fn run() {
     let (s, r) = channel::<Vec<u8>>(2);
     let (sc, rc) = channel::<()>(1);
 
-    let invoke_handler = {
-        let builder = tauri_specta::ts::builder().commands(tauri_specta::collect_commands![
-            crate::unzip::try_unzip,
-            crate::unzip::cancel_unzip,
-            crate::unzip::file_password_submit,
-            recently_used
-        ]);
-
-        #[cfg(all(debug_assertions, not(mobile)))]
-        let builder = builder.path("../src/bindings.ts");
-
-        builder
-            .build()
-            .expect("Failed to setup builder with tauri specta")
-    };
-
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
@@ -91,7 +75,13 @@ pub fn run() {
         // receiver
         .manage(Arc::new(Mutex::new(r)))
         .manage(Arc::new(Mutex::new(rc)))
-        .invoke_handler(invoke_handler)
+        .invoke_handler(tauri::generate_handler![
+            crate::unzip::try_unzip,
+            crate::unzip::try_unzip_prefixtree,
+            crate::unzip::cancel_unzip,
+            crate::unzip::file_password_submit,
+            recently_used,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
