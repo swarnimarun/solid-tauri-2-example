@@ -8,6 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { TextField, TextFieldRoot } from "./components/ui/textfield";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./components/ui/card";
 
+import { toaster } from "@kobalte/core";
+import {
+  Toast,
+  ToastContent,
+  ToastProgress,
+  ToastTitle
+} from "@/components/ui/toast";
+
 function RecursiveRender(props: { paths: string[] }) {
   return <ul class="flex-col space-y-1">
     <For each={props.paths} fallback={<></>}>
@@ -56,7 +64,18 @@ function App() {
     if (path) {
       // clear up path map
       setPathMap([]);
-      commands.tryUnzip({ path });
+      let unz = async () => {
+        let res = await commands.tryUnzip({ path });
+        if (res.status === "error")
+          toaster.show((props) => (
+            <Toast toastId={props.toastId}>
+              <ToastContent>
+                <ToastTitle>Bad Password: Failed to decrypt!</ToastTitle>
+              </ToastContent>
+            </Toast>
+          ));
+      };
+      unz()
     }
   });
 
@@ -65,12 +84,12 @@ function App() {
   }
 
   async function passwordDialogHandle(b: boolean) {
-    if (!b) {
+    // if not triggered by alert update, then process cancel request
+    if (alert() && !b) {
       // raise an error and cancel unzip request
       await commands.cancelUnzip();
+      showAlert(false);
     }
-    // close alert
-    showAlert(b);
   }
 
   return (
@@ -83,16 +102,12 @@ function App() {
           </DialogHeader>
           <form onSubmit={async (e) => {
             e.preventDefault();
-            // don't log password
-            // console.log("password: ", password());
             await filePasswordSubmit(password());
-            // close alert
             showAlert(false);
-            // reset password
             setPassword("");
           }}>
             <TextFieldRoot>
-              <TextField type="password" placeholder="Password" onChange={(e: Event & { currentTarget: HTMLInputElement }) => setPassword(e.currentTarget?.value)} />
+              <TextField type="password" placeholder="Password" value={password()} onChange={(e: Event & { currentTarget: HTMLInputElement }) => setPassword(e.currentTarget?.value)} />
             </TextFieldRoot>
             <br />
             <DialogFooter class="w-full">

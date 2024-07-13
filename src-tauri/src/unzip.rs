@@ -123,6 +123,7 @@ pub async fn try_unzip_prefixtree<'a>(
                 password.clone()
             } else {
                 // create alert for password for each file (for now!)
+                tracing::info!("requested password prefix-tree");
                 let _ = window
                     .emit("file-password-request", ())
                     .map_err(|e| AppError::EventError(e.to_string()));
@@ -209,7 +210,7 @@ pub async fn try_unzip(
     )
     .map_err(|e| AppError::FailedUnzip(e.to_string()))?;
 
-    let mut s: HashMap<[u8; 2], Vec<u8>> = HashMap::new();
+    let mut password = None;
 
     for i in 0..archive.len() {
         let err = match archive.by_index(i) {
@@ -237,16 +238,10 @@ pub async fn try_unzip(
             return Err(AppError::FailedUnzip(err.to_string()));
         }
         // manage caching of passwords for files
-        let password = if let Some(vv) = archive
-            .get_aes_verification_key_and_salt(i)
-            .ok()
-            .flatten()
-            .map(|e| e.verification_value)
-        {
-            if let Some(password) = s.get(&vv) {
-                // if the key is available
-                password.clone()
-            } else {
+        let password = if let Some(ref password) = password {
+            password
+        } else {
+            _ = password.insert({
                 // create alert for password for each file (for now!)
                 let _ = window
                     .emit("file-password-request", ())
@@ -262,21 +257,17 @@ pub async fn try_unzip(
                 futures::select! {
                     password = password_fut => {
                         let password = password.ok_or(AppError::PasswordFail)?;
-                        s.insert(vv, password.clone());
+                        // s.insert(vv, password.clone());
                         password
                     },
                     _ = cancel_fut => {
                         return Err(AppError::PasswordFail)
                     },
                 }
-            }
-        } else {
-            return Err(AppError::FailedUnzip(
-                "unable to get password, should be unreachable".to_string(),
-            ));
+            });
+            password.as_ref().unwrap()
         };
 
-        // access file with password
         match archive.by_index_decrypt(i, &password) {
             Ok(file) if file.enclosed_name().is_some() => {
                 file_to_event(&file, &window)?;
@@ -290,7 +281,9 @@ pub async fn try_unzip(
                 continue;
             }
             // TODO: handle the error here properly
-            Err(_) => panic!("failed to decrypt/unzip file"),
+            Err(_) => {
+                return Err(AppError::PasswordFail);
+            }
         }
     }
 
